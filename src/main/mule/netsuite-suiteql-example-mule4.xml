@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:netsuite-restlet="http://www.mulesoft.org/schema/mule/netsuite-restlet" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:netsuite="http://www.mulesoft.org/schema/mule/netsuite"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/netsuite http://www.mulesoft.org/schema/mule/netsuite/current/mule-netsuite.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/netsuite-restlet http://www.mulesoft.org/schema/mule/netsuite-restlet/current/mule-netsuite-restlet.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="3e963cfe-e5a1-4cfb-9d9a-5c9617730c3c" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<http:request-config name="NetSuite_Request_configuration" doc:name="HTTP Request configuration" doc:id="d546dfcb-d729-41d3-b10e-0e031e26b735" >
+		<http:request-connection protocol="HTTPS" host="${netsuite.host}"/>
+	</http:request-config>
+	<configuration-properties doc:name="Configuration properties" doc:id="03644e22-b441-4e39-a652-777ac31a9273" file="mule-properties.yaml" />
+	<flow name="netsuite-oauth1a-example" doc:id="5288371e-3b5b-43da-a298-16aad965e78d" >
+		<http:listener doc:name="/test" doc:id="fd869a87-58d1-464e-9198-a9355df33e0b" config-ref="HTTP_Listener_config" path="/test"/>
+		<ee:transform doc:name="Transform Message" doc:id="769d33a5-971d-41e8-a409-51273f1275dc" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="oauth_signature" ><![CDATA[%dw 2.0
+output application/json
+import dw::Crypto
+import toBinary from dw::core::Numbers
+import withMaxSize from dw::core::Strings
+import toBase64 from dw::core::Binaries
+import * from dw::core::URL
+
+var http_method = "GET"
+var base_url = "https://" ++ Mule::p('netsuite.host')++ "/services/rest/record/v1/customer"
+var query_string = attributes.queryString
+var realm = Mule::p('oauth.realm')
+var oauth_consumer_key = Mule::p('oauth.consumer_key')
+var oauth_nonce = toBase64(toBinary(randomInt(99999999999))) withMaxSize 12
+var oauth_timestamp = now() as Number
+var oauth_signature_method = Mule::p('oauth.signature_method')
+var oauth_token = Mule::p('oauth.access_token')
+var oauth_version = Mule::p('oauth.version')
+var consumer_secret = Mule::p('oauth.consumer_secret')
+var oauth_token_secret = Mule::p('oauth.token_secret')
+var parameter_string = 'oauth_consumer_key=' ++ oauth_consumer_key ++ '&oauth_nonce=' ++ oauth_nonce ++ '&oauth_signature_method=' ++ oauth_signature_method ++ '&oauth_timestamp=' ++ oauth_timestamp ++ '&oauth_token=' ++ oauth_token ++ '&oauth_version=' ++ oauth_version
+var signature_base_string = http_method ++ '&' ++ encodeURIComponent(base_url)  ++ '&' ++ encodeURIComponent(parameter_string)
+var signing_key = consumer_secret ++ "&" ++ oauth_token_secret
+var signature = toBase64(Crypto::HMACBinary(signing_key as Binary, signature_base_string as Binary, "HmacSHA256"))
+---
+{
+	http_method: http_method,
+	base_url: base_url,
+	query_string: query_string,
+	realm: realm,
+	oauth_consumer_key: oauth_consumer_key,
+	oauth_token: oauth_token,
+	oauth_signature_method: oauth_signature_method,
+	oauth_timestamp: oauth_timestamp,
+	oauth_nonce: oauth_nonce,
+	oauth_version: oauth_version,
+	consumer_secret: consumer_secret,
+	oauth_token_secret: oauth_token_secret,
+	signing_key: signing_key,
+	parameter_string: parameter_string,
+	signature_base_string: signature_base_string,
+	signature: signature,
+	oauth_signature: encodeURIComponent(signature)
+} ]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Transform Message" doc:id="d562be60-3389-415c-a557-760c55ae375b" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="authorization_header" ><![CDATA[%dw 2.0
+output application/java
+---
+'OAuth realm="' ++ p('oauth.realm') ++ '",oauth_consumer_key="' ++ vars.oauth_signature.oauth_consumer_key ++
+'",oauth_token="' ++ vars.oauth_signature.oauth_token ++
+'",oauth_signature_method="' ++ vars.oauth_signature.oauth_signature_method ++ 
+'",oauth_timestamp="' ++ vars.oauth_signature.oauth_timestamp ++ 
+'",oauth_nonce="' ++ vars.oauth_signature.oauth_nonce ++ 
+'",oauth_version="' ++ vars.oauth_signature.oauth_version ++ 
+'",oauth_signature="' ++ vars.oauth_signature.oauth_signature ++ '"']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="GET" doc:name="Request" doc:id="dd3dd3a9-1506-42d0-b763-1241c8f4c8b9" config-ref="NetSuite_Request_configuration" path="/services/rest/record/v1/customer">
+			<http:headers ><![CDATA[#[output application/java
+---
+{
+	"Authorization": vars.authorization_header
+}]]]></http:headers>
+		</http:request>
+		<ee:transform doc:name="Transform Message" doc:id="35d6ec50-1f69-45f6-a386-16e8b1fcfe07" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+	
+	<flow name="netsuite-suiteql-example-mule4Flow" doc:id="93e34d93-8da6-4e10-86b6-edb48019a73b" >
+		<http:listener doc:name="/query" doc:id="b8d083e3-40e8-4990-bbb0-78cd659ae20b" config-ref="HTTP_Listener_config" path="/query"/>
+		<ee:transform doc:name="Transform Message" doc:id="3609ec13-91bd-4234-9312-519821259dcf" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="oauth_signature" ><![CDATA[%dw 2.0
+output application/json
+import dw::Crypto
+import toBinary from dw::core::Numbers
+import withMaxSize from dw::core::Strings
+import toBase64 from dw::core::Binaries
+import * from dw::core::URL
+
+var http_method = "POST"
+var base_url = "https://" ++ Mule::p('netsuite.host')++ "/services/rest/query/v1/suiteql"
+var query_string = attributes.queryString
+var realm = Mule::p('oauth.realm')
+var oauth_consumer_key = Mule::p('oauth.consumer_key')
+var oauth_nonce = toBase64(toBinary(randomInt(99999999999))) withMaxSize 12
+var oauth_timestamp = now() as Number
+var oauth_signature_method = Mule::p('oauth.signature_method')
+var oauth_token = Mule::p('oauth.access_token')
+var oauth_version = Mule::p('oauth.version')
+var consumer_secret = Mule::p('oauth.consumer_secret')
+var oauth_token_secret = Mule::p('oauth.token_secret')
+var parameter_string = 'oauth_consumer_key=' ++ oauth_consumer_key ++ '&oauth_nonce=' ++ oauth_nonce ++ '&oauth_signature_method=' ++ oauth_signature_method ++ '&oauth_timestamp=' ++ oauth_timestamp ++ '&oauth_token=' ++ oauth_token ++ '&oauth_version=' ++ oauth_version
+var signature_base_string = http_method ++ '&' ++ encodeURIComponent(base_url)  ++ '&' ++ encodeURIComponent(parameter_string)
+var signing_key = consumer_secret ++ "&" ++ oauth_token_secret
+var signature = toBase64(Crypto::HMACBinary(signing_key as Binary, signature_base_string as Binary, "HmacSHA256"))
+---
+{
+	http_method: http_method,
+	base_url: base_url,
+	query_string: query_string,
+	realm: realm,
+	oauth_consumer_key: oauth_consumer_key,
+	oauth_token: oauth_token,
+	oauth_signature_method: oauth_signature_method,
+	oauth_timestamp: oauth_timestamp,
+	oauth_nonce: oauth_nonce,
+	oauth_version: oauth_version,
+	consumer_secret: consumer_secret,
+	oauth_token_secret: oauth_token_secret,
+	signing_key: signing_key,
+	parameter_string: parameter_string,
+	signature_base_string: signature_base_string,
+	signature: signature,
+	oauth_signature: encodeURIComponent(signature)
+} ]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Transform Message" doc:id="2fe5959d-3a38-4d56-9836-fe5724e59a52" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="authorization_header" ><![CDATA[%dw 2.0
+output application/java
+---
+'OAuth realm="' ++ p('oauth.realm') ++ '",oauth_consumer_key="' ++ vars.oauth_signature.oauth_consumer_key ++
+'",oauth_token="' ++ vars.oauth_signature.oauth_token ++
+'",oauth_signature_method="' ++ vars.oauth_signature.oauth_signature_method ++ 
+'",oauth_timestamp="' ++ vars.oauth_signature.oauth_timestamp ++ 
+'",oauth_nonce="' ++ vars.oauth_signature.oauth_nonce ++ 
+'",oauth_version="' ++ vars.oauth_signature.oauth_version ++ 
+'",oauth_signature="' ++ vars.oauth_signature.oauth_signature ++ '"']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="POST" doc:name="Request" doc:id="46c386b8-0370-40a9-897f-d55dc379c03e" config-ref="NetSuite_Request_configuration" path="/services/rest/query/v1/suiteql">
+			<http:body ><![CDATA[#[output application/json
+---
+{
+    "q": "SELECT companyName, Phone, Email FROM customer"
+}]]]></http:body>
+			<http:headers ><![CDATA[#[output application/java
+---
+{
+	"Authorization": vars.authorization_header,
+	"Prefer": "transient"
+}]]]></http:headers>
+		</http:request>
+		<ee:transform doc:name="Transform Message" doc:id="7342ac42-c8b9-4f49-89ea-11b2b2683406" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+</mule>
